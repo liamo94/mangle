@@ -18,9 +18,37 @@ enum AppTheme {
     /// Cards, find bar and key caps: a step lighter than `windowBG` in dark mode, so they stand off it.
     static let controlBG = dynamic(dark: NSColor(srgbRed: 0.125, green: 0.135, blue: 0.135, alpha: 1), light: .controlBackgroundColor)
 
+    /// The editor's bars and title bar: the syntax theme's background a shade darker, so the
+    /// window reads as one surface with the text area still set apart.
+    static func editorChrome(themeBackground: NSColor) -> NSColor {
+        let rgb = themeBackground.usingColorSpace(.sRGB) ?? themeBackground
+        let luminance = 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
+        return rgb.blended(withFraction: luminance < 0.5 ? 0.22 : 0.05, of: .black) ?? rgb
+    }
+
     private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
         NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
+    }
+}
+
+/// Sets the hosting window's background colour (which a transparent title bar shows).
+struct WindowBackground: NSViewRepresentable {
+    var color: NSColor
+
+    func makeNSView(context: Context) -> NSView { WindowBackgroundView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        (view as? WindowBackgroundView)?.color = color
+    }
+
+    private final class WindowBackgroundView: NSView {
+        var color: NSColor? { didSet { apply() } }
+        override func viewDidMoveToWindow() { apply() }
+        private func apply() {
+            guard let window, let color, window.backgroundColor != color else { return }
+            window.backgroundColor = color
         }
     }
 }
@@ -397,13 +425,22 @@ struct EditorView: View {
         ("YAML", "yaml"),
     ]
     
+    /// The bars' colour, from the theme in use (see `AppTheme.editorChrome`).
+    private var chromeColor: NSColor {
+        let theme = settings.themeName(isDark: colorScheme == .dark, presenting: viewModel.isPresenting)
+        guard let background = ThemeCatalog.background(theme) else { return AppTheme.windowBG }
+        return AppTheme.editorChrome(themeBackground: background)
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
+        let chrome = chromeColor
+        return VStack(spacing: 0) {
             if needsAccessibility && !viewModel.isPresenting {
                 accessibilityBanner
             }
             if showFindBar {
                 findBar
+                    .background(Color(nsColor: chrome))
                 Divider()
             }
             
@@ -435,8 +472,11 @@ struct EditorView: View {
             if !viewModel.isPresenting {
                 Divider()
                 bottomBar
+                    .background(Color(nsColor: chrome))
             }
         }
+        // The title bar shows the window's background, so it matches the bars too.
+        .background(WindowBackground(color: chrome))
         .overlay(alignment: .bottomTrailing) {
             if showPresentingHint {
                 Text("Presenting · Select lines to spotlight, ← → to step · Esc to exit")
@@ -803,7 +843,6 @@ struct EditorView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(nsColor: AppTheme.controlBG))
     }
     
     private func findToggle(_ label: String, isOn: Bool, help: String, underline: Bool = false, action: @escaping () -> Void) -> some View {
@@ -910,7 +949,6 @@ struct EditorView: View {
             bottomBarHStack(showStats: false, showKeyboard: false, showBadges: false, showCursor: false)
         }
         .frame(height: 36)
-        .background(Color(nsColor: AppTheme.windowBG))
     }
 
     @ViewBuilder

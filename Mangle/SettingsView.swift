@@ -350,10 +350,21 @@ class ShortcutCaptureNSView: NSView {
 
 /// Highlightr's bundled syntax themes, read once.
 enum ThemeCatalog {
+    private static let highlightr = Highlightr()
+    private static var backgrounds: [String: NSColor] = [:]
+
     static let names: [String] = {
-        guard let h = Highlightr() else { return [SettingsManager.defaultDarkTheme, SettingsManager.defaultLightTheme] }
+        guard let h = highlightr else { return [SettingsManager.defaultDarkTheme, SettingsManager.defaultLightTheme] }
         return h.availableThemes().sorted()
     }()
+
+    /// A theme's background colour, read once per theme.
+    static func background(_ name: String) -> NSColor? {
+        if let cached = backgrounds[name] { return cached }
+        let color = highlightr?.backgroundColor(ofTheme: name)
+        backgrounds[name] = color
+        return color
+    }
     
     static func displayName(_ name: String) -> String {
         name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")

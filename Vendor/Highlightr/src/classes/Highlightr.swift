@@ -99,6 +99,14 @@ open class Highlightr
         return true
     }
     
+    /// The named theme's background colour, without switching to the theme.
+    open func backgroundColor(ofTheme name: String) -> RPColor?
+    {
+        guard let path = bundle.path(forResource: name+".min", ofType: "css"),
+              let themeString = try? String(contentsOfFile: path) else { return nil }
+        return Theme(themeString: themeString).themeBackgroundColor
+    }
+
     /**
      Takes a String and returns a NSAttributedString with the given language highlighted.
      

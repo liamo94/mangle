@@ -670,6 +670,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         centerWindow(window, on: screen)
         window.title = "Mangle Settings"
         window.backgroundColor = AppTheme.windowBG
+        // Let the title bar show the background colour instead of the system's lighter one.
+        window.titlebarAppearsTransparent = true
         window.contentView = NSHostingView(rootView: ScrollView { SettingsView() })
         window.isReleasedWhenClosed = false
         // Like the editor: open on the current Space (or over a full-screen app), not the
@@ -827,6 +829,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         place(window, replacing: anchor)
         window.title = "History"
         window.backgroundColor = AppTheme.windowBG
+        // Let the title bar show the background colour instead of the system's lighter one.
+        window.titlebarAppearsTransparent = true
         window.identifier = NSUserInterfaceItemIdentifier("history")
         window.contentView = NSHostingView(rootView: contentView)
         window.level = .floating
@@ -1111,6 +1115,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         place(window, replacing: anchor)
         window.identifier = NSUserInterfaceItemIdentifier("editor")
         window.backgroundColor = AppTheme.windowBG
+        // Let the title bar show the background colour instead of the system's lighter one.
+        window.titlebarAppearsTransparent = true
         window.contentView = NSHostingView(rootView: contentView)
         window.level = .floating
         window.isReleasedWhenClosed = false
