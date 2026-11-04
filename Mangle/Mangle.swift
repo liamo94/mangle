@@ -669,6 +669,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         
         centerWindow(window, on: screen)
         window.title = "Mangle Settings"
+        window.backgroundColor = AppTheme.windowBG
         window.contentView = NSHostingView(rootView: ScrollView { SettingsView() })
         window.isReleasedWhenClosed = false
         // Like the editor: open on the current Space (or over a full-screen app), not the
@@ -825,6 +826,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         
         place(window, replacing: anchor)
         window.title = "History"
+        window.backgroundColor = AppTheme.windowBG
         window.identifier = NSUserInterfaceItemIdentifier("history")
         window.contentView = NSHostingView(rootView: contentView)
         window.level = .floating
@@ -1108,6 +1110,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         
         place(window, replacing: anchor)
         window.identifier = NSUserInterfaceItemIdentifier("editor")
+        window.backgroundColor = AppTheme.windowBG
         window.contentView = NSHostingView(rootView: contentView)
         window.level = .floating
         window.isReleasedWhenClosed = false
@@ -1117,7 +1120,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         window.delegate = self
         titleObserver = editorViewModel.$isScratch.combineLatest(editorViewModel.$origin)
             .sink { [weak window] isScratch, origin in
-                window?.title = isScratch ? "Scratch Pad" : origin.title
+                // Always "Mangle", with where the text came from underneath.
+                window?.title = "Mangle"
+                window?.subtitle = isScratch ? "Scratch Pad" : origin.title
             }
         
         self.editorWindow = window
@@ -1224,10 +1229,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private func positionWindowNearCursor(_ window: NSWindow) {
         let screen = screenAtCursor()
         let cursor = NSEvent.mouseLocation
-        let sf = screen.visibleFrame
+        // Keep clear of the screen edges (and the menu bar and Dock) rather than opening flush
+        // against them. A window too big for the inset area still keeps its top-left on screen.
+        let margin: CGFloat = 32
+        let sf = screen.visibleFrame.insetBy(dx: margin, dy: margin)
         let wf = window.frame
         let x = max(sf.minX, min(cursor.x - wf.width / 2,  sf.maxX - wf.width))
-        let y = max(sf.minY, min(cursor.y - wf.height / 2, sf.maxY - wf.height))
+        let y = min(sf.maxY - wf.height, max(sf.minY, cursor.y - wf.height / 2))
         window.setFrameOrigin(NSPoint(x: x, y: y))
     }
     

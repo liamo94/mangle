@@ -11,7 +11,18 @@ enum AppTheme {
     /// Text on a teal fill — white only reaches ~2:1 contrast there.
     static let onTeal    = NSColor(red: 0.04, green: 0.10, blue: 0.08, alpha: 0.88)
     static let onTealSUI = Color(red: 0.04, green: 0.10, blue: 0.08)
-    static let editorDarkBG = NSColor(red: 0.11, green: 0.13, blue: 0.13, alpha: 1.0)
+    static let editorDarkBG = NSColor(srgbRed: 0.075, green: 0.087, blue: 0.087, alpha: 1.0)
+
+    /// Window and bar backgrounds: darker than the system's in dark mode, unchanged in light.
+    static let windowBG = dynamic(dark: NSColor(srgbRed: 0.080, green: 0.088, blue: 0.088, alpha: 1), light: .windowBackgroundColor)
+    /// Cards, find bar and key caps: a step lighter than `windowBG` in dark mode, so they stand off it.
+    static let controlBG = dynamic(dark: NSColor(srgbRed: 0.125, green: 0.135, blue: 0.135, alpha: 1), light: .controlBackgroundColor)
+
+    private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
+    }
 }
 
 // MARK: - Editor Font
@@ -792,7 +803,7 @@ struct EditorView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color(nsColor: AppTheme.controlBG))
     }
     
     private func findToggle(_ label: String, isOn: Bool, help: String, underline: Bool = false, action: @escaping () -> Void) -> some View {
@@ -899,7 +910,7 @@ struct EditorView: View {
             bottomBarHStack(showStats: false, showKeyboard: false, showBadges: false, showCursor: false)
         }
         .frame(height: 36)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: AppTheme.windowBG))
     }
 
     @ViewBuilder
@@ -4313,7 +4324,7 @@ private struct ShortcutsPopover: View {
                                     .foregroundColor(.secondary)
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 2)
-                                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
+                                    .background(Color(nsColor: AppTheme.controlBG), in: RoundedRectangle(cornerRadius: 5))
                             }
                         }
                     }

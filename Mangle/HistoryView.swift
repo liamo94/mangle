@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import Highlightr
 
 
@@ -13,6 +14,48 @@ func formatRelativeDate(_ date: Date) -> String {
     abbreviatedRelativeFormatter.localizedString(for: date, relativeTo: Date())
 }
 
+/// Which entries History lists: everything, edited clipboard text, scratch pads, or pinned.
+enum HistoryFilter: String, CaseIterable {
+    case all, clipboard, scratch, pinned
+
+    var label: String {
+        switch self {
+        case .all: "All"
+        case .clipboard: "Clipboard"
+        case .scratch: "Scratch"
+        case .pinned: "Pinned"
+        }
+    }
+
+    func includes(_ entry: HistoryEntry) -> Bool {
+        switch self {
+        case .all: true
+        case .clipboard: !entry.isScratch
+        case .scratch: entry.isScratch
+        case .pinned: entry.isPinned
+        }
+    }
+
+    /// What the empty list says when nothing matches.
+    var emptyTitle: String {
+        switch self {
+        case .all: "No History"
+        case .clipboard: "No Clipboard Edits"
+        case .scratch: "No Scratch Pads"
+        case .pinned: "Nothing Pinned"
+        }
+    }
+
+    var emptySubtitle: String {
+        switch self {
+        case .all: "Saved edits will appear here"
+        case .clipboard: "Saved edits of copied text will appear here"
+        case .scratch: "Saved scratch pads will appear here"
+        case .pinned: "Pin an entry with ⌘P to keep it here"
+        }
+    }
+}
+
 struct HistoryView: View {
     @ObservedObject var historyManager: HistoryManager
     var onSelectEntry: (HistoryEntry) -> Void
@@ -21,23 +64,27 @@ struct HistoryView: View {
     
     @State private var selectedEntry: HistoryEntry?
     @State private var searchText = ""
+    @AppStorage("HistoryFilter") private var filter: HistoryFilter = .all
     @State private var hoverCopy = false
     @State private var hoverPaste = false
     @State private var hoverEdit = false
     @State private var hoverDelete = false
-    @State private var hoveredRow: HistoryEntry.ID?
+    /// The listed entries. Stored rather than computed: searching thousands of entries on
+    /// every redraw (each hover, each arrow key) made large histories stutter.
+    @State private var filteredEntries: [HistoryEntry] = []
     @ObservedObject private var settings = SettingsManager.shared
     @State private var lastTapEntry: HistoryEntry.ID? = nil
     @State private var lastTapTime: Date = .distantPast
     @FocusState private var searchFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
     
-    /// Filters and orders entries. Callers compute this once and pass it along — it used to
-    /// be a computed property re-evaluated (filter + sort) at every use during a render.
-    private var filteredEntries: [HistoryEntry] {
-        let base = searchText.isEmpty
-        ? historyManager.entries
-        : historyManager.entries.filter { $0.text.localizedCaseInsensitiveContains(searchText) }
+    /// Filters and orders entries; only rerun when the search, tab or entries change.
+    private func computeEntries(from all: [HistoryEntry]) -> [HistoryEntry] {
+        let filter = filter
+        let searchText = searchText
+        let base = all.filter { entry in
+            filter.includes(entry) && (searchText.isEmpty || entry.text.localizedCaseInsensitiveContains(searchText))
+        }
         // Pinned entries first, otherwise keeping recency order (stable, unlike sorted(by:))
         return base.filter(\.isPinned) + base.filter { !$0.isPinned }
     }
@@ -56,29 +103,38 @@ struct HistoryView: View {
         }
         .frame(minWidth: 640, minHeight: 420)
         .onAppear {
+            filteredEntries = computeEntries(from: historyManager.entries)
             selectedEntry = filteredEntries.first
             // The app delegate's key monitor hands this window's keys here. Registering a
             // handler (rather than a monitor per view) means a replaced window's view can't
             // keep handling keys for the new one.
             AppDelegate.shared?.historyKeyHandler = handleKey
         }
-        .onChange(of: searchText) {
-            // Keep the selection on a visible entry so Return/⌘↩ act on what's shown.
-            let entries = filteredEntries
-            if let selected = selectedEntry, entries.contains(where: { $0.id == selected.id }) { return }
-            selectedEntry = entries.first
-        }
-        .onChange(of: historyManager.entries) {
-            if let selected = selectedEntry {
-                if !historyManager.entries.contains(where: { $0.id == selected.id }) {
-                    selectedEntry = filteredEntries.first
-                }
-            } else {
-                selectedEntry = filteredEntries.first
-            }
-        }
+        .onChange(of: searchText) { refreshEntries(historyManager.entries) }
+        .onChange(of: filter) { refreshEntries(historyManager.entries) }
+        // Not onChange: entries compare by ID, so pinning or editing one wouldn't count as a change.
+        .onReceive(historyManager.$entries.dropFirst()) { refreshEntries($0) }
     }
     
+    /// Recomputes the list, keeping the selection on a listed entry so Return/⌘↩ act on
+    /// what's shown. Unpinning in the Pinned tab, say, takes the entry out of the list.
+    private func refreshEntries(_ all: [HistoryEntry]) {
+        let entries = computeEntries(from: all)
+        filteredEntries = entries
+        if let selected = selectedEntry, let fresh = entries.first(where: { $0.id == selected.id }) {
+            selectedEntry = fresh // pick up a changed pin or text
+            return
+        }
+        selectedEntry = entries.first
+    }
+
+    /// Steps through the filter tabs, wrapping around.
+    private func cycleFilter(by offset: Int) {
+        let all = HistoryFilter.allCases
+        let idx = all.firstIndex(of: filter) ?? 0
+        filter = all[(idx + offset + all.count) % all.count]
+    }
+
     /// Every key pressed while History is the key window. Returns nil when handled.
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         // Mid-composition with an input method (Japanese, Chinese…), Return and Esc belong
@@ -112,6 +168,8 @@ struct HistoryView: View {
             case "c": if let entry = selectedEntry { copyAndClose(entry) }; return nil
             case "f": searchFocused = true; return nil
             case "p": if let entry = selectedEntry { historyManager.togglePin(entry) }; return nil
+            case "[": cycleFilter(by: -1); return nil
+            case "]": cycleFilter(by: +1); return nil
             case "z" where !inSearch: undoDelete(); return nil
             case "1"..."9":
                 let entries = filteredEntries
@@ -239,7 +297,7 @@ struct HistoryView: View {
             }
         }
         .frame(height: 36)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: AppTheme.windowBG))
     }
     
     // MARK: - Sidebar
@@ -250,11 +308,17 @@ struct HistoryView: View {
             
             Divider()
             
+            TealSegmentedPicker(selection: $filter, options: HistoryFilter.allCases.map { ($0, $0.label) })
+                .font(.system(size: 11))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .help("Show all entries, edited clipboard text, scratch pads or pinned entries (⌘[ and ⌘] switch)")
+            
             if entries.isEmpty {
                 emptyState(
                     icon: searchText.isEmpty ? "doc.text" : "magnifyingglass",
-                    title: searchText.isEmpty ? "No History" : "No Results",
-                    subtitle: searchText.isEmpty ? "Saved edits will appear here" : "No entries match your search — Esc clears it"
+                    title: searchText.isEmpty ? filter.emptyTitle : "No Results",
+                    subtitle: searchText.isEmpty ? filter.emptySubtitle : "No entries match your search — Esc clears it"
                 )
             } else {
                 ScrollViewReader { proxy in
@@ -264,12 +328,8 @@ struct HistoryView: View {
                         ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                             let isSelected = selectedEntry?.id == entry.id
                             HistoryEntryRow(entry: entry, meta: historyManager.meta(for: entry), isSelected: isSelected,
-                                            isHovered: hoveredRow == entry.id,
                                             pasteShortcut: index < 9 ? "⌘\(index + 1)" : nil,
                                             codeFont: settings.editorFont)
-                                .onHover { hovering in
-                                    if hovering { hoveredRow = entry.id } else if hoveredRow == entry.id { hoveredRow = nil }
-                                }
                                 .onTapGesture {
                                     NSApp.keyWindow?.makeFirstResponder(nil)
                                     let now = Date()
@@ -316,7 +376,7 @@ struct HistoryView: View {
             }
         }
         .frame(width: 260)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: AppTheme.windowBG))
     }
     
     private var searchBar: some View {
@@ -411,7 +471,8 @@ struct HistoryEntryRow: View {
     let entry: HistoryEntry
     let meta: HistoryEntryMeta
     var isSelected: Bool = false
-    var isHovered: Bool = false
+    /// The row's own state, so hovering redraws just this row rather than all of History.
+    @State private var isHovered = false
     /// "⌘1"…"⌘9" for the first nine rows, which those keys paste.
     var pasteShortcut: String? = nil
     /// The editor's font, so a snippet reads here as it will there.
@@ -478,6 +539,7 @@ struct HistoryEntryRow: View {
                       : isHovered ? Color.secondary.opacity(0.08) : Color.clear)
         )
         .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
 }
 

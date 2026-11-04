@@ -112,6 +112,7 @@ class SettingsManager: ObservableObject {
             UserDefaults.standard.set(pauseHistory, forKey: pauseHistoryKey)
         }
     }
+    /// Most unpinned entries to keep; 0 keeps everything.
     @Published var maxHistory: Int {
         didSet {
             UserDefaults.standard.set(maxHistory, forKey: maxHistoryKey)
@@ -237,8 +238,9 @@ class SettingsManager: ObservableObject {
         presentationHighContrast = UserDefaults.standard.object(forKey: presentationHighContrastKey) as? Bool ?? true
         presentationLineNumbers = UserDefaults.standard.bool(forKey: presentationLineNumbersKey)
         
-        let storedMax = UserDefaults.standard.integer(forKey: "MaxHistory")
-        maxHistory = storedMax > 0 ? storedMax : 100
+        // Absent means never set (default 100); a stored 0 means unlimited.
+        maxHistory = UserDefaults.standard.object(forKey: "MaxHistory") == nil
+            ? 100 : max(0, UserDefaults.standard.integer(forKey: "MaxHistory"))
         
         let storedTabSize = UserDefaults.standard.integer(forKey: "TabSize")
         tabSize = storedTabSize > 0 ? storedTabSize : 4
@@ -369,6 +371,12 @@ struct SettingsView: View {
     @State private var scratchShortcut: KeyboardShortcut
     @State private var showClearConfirm = false
     @State private var maxHistory: Int
+    /// The limit field's text, kept to digits. Separate from `maxHistory` so the field can be
+    /// empty mid-edit; it snaps back to the saved limit when editing ends.
+    @State private var limitText: String
+    /// The limit to restore when Unlimited is switched back off.
+    @State private var lastLimit: Int
+    @FocusState private var limitFocused: Bool
     // Edited locally and applied on Save, so Cancel discards them like it does the shortcuts.
     @State private var pauseHistory: Bool
     @State private var tabSize: Int
@@ -389,6 +397,9 @@ struct SettingsView: View {
         _historyShortcut = State(initialValue: settings.historyShortcut)
         _scratchShortcut = State(initialValue: settings.scratchShortcut)
         _maxHistory = State(initialValue: settings.maxHistory)
+        let limit = settings.maxHistory > 0 ? settings.maxHistory : 100
+        _limitText = State(initialValue: String(limit))
+        _lastLimit = State(initialValue: limit)
         _pauseHistory = State(initialValue: settings.pauseHistory)
         _tabSize = State(initialValue: settings.tabSize)
         _editorFont = State(initialValue: settings.editorFont)
@@ -470,9 +481,49 @@ struct SettingsView: View {
                         Divider()
                         
                         HStack {
-                            Text("History Limit")
+                            Text("Unlimited History")
                             Spacer()
-                            Stepper("\(maxHistory) entries", value: $maxHistory, in: 10...500, step: 10)
+                            Toggle("", isOn: Binding(
+                                get: { maxHistory == 0 },
+                                set: { maxHistory = $0 ? 0 : lastLimit }
+                            ))
+                            .labelsHidden()
+                        }
+                        .help("Keep every entry. Pinned entries are always kept.")
+                        
+                        if maxHistory > 0 {
+                            HStack {
+                                Text("History Limit")
+                                Spacer()
+                                // Text, not a number format: those only commit on Return, so a
+                                // typed value could be lost by clicking Save.
+                                TextField("", text: $limitText)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 70)
+                                    .focused($limitFocused)
+                                    .onChange(of: limitText) { _, text in
+                                        // Digits only: no minus signs, decimals or letters.
+                                        let digits = String(text.filter { $0.isASCII && $0.isNumber }.prefix(9))
+                                        if digits != text { limitText = digits; return }
+                                        if let n = Int(digits), n > 0 { maxHistory = n }
+                                    }
+                                    // An empty field or 0 isn't a limit; show the one in effect.
+                                    .onChange(of: limitFocused) { _, focused in
+                                        if !focused { limitText = String(maxHistory) }
+                                    }
+                                    .onSubmit { limitText = String(maxHistory) }
+                                Stepper("", value: $maxHistory, in: 1...999_999_999, step: 50)
+                                    .labelsHidden()
+                                Text("entries")
+                                    .foregroundColor(.secondary)
+                            }
+                            .help("Oldest unpinned entries are dropped past this. Type any number from 1 up.")
+                            .onChange(of: maxHistory) { _, limit in
+                                guard limit > 0 else { return }
+                                lastLimit = limit
+                                // The stepper changed it; keep the field in step.
+                                if Int(limitText) != limit { limitText = String(limit) }
+                            }
                         }
                         
                         Divider()
@@ -630,7 +681,7 @@ struct SettingsView: View {
             }
             .padding()
             .frame(maxWidth: .infinity)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(Color(nsColor: AppTheme.controlBG))
             .cornerRadius(8)
             if let caption {
                 Text(caption)

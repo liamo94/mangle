@@ -129,6 +129,7 @@ class HistoryManager: ObservableObject {
     /// Order is preserved (pinned entries aren't hoisted — the UI sorts them for display).
     func enforceLimit(save: Bool = false) {
         let max = SettingsManager.shared.maxHistory
+        guard max > 0 else { return } // unlimited
         var unpinnedSeen = 0
         let trimmed = entries.filter { entry in
             if entry.isPinned { return true }
