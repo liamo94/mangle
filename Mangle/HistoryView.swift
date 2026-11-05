@@ -621,7 +621,17 @@ struct SyntaxPreviewView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         
         let theme = SettingsManager.shared.themeName(isDark: isDark)
-        let themeChanged = coordinator.appliedTheme != theme || coordinator.appliedFont != font
+        let themeChanged = coordinator.appliedTheme != theme
+        // A zoom in the editor (this window can be open behind it) only needs the font
+        // swapped in, not a fresh highlight.
+        if !themeChanged, coordinator.appliedFont != font, let h = Self.sharedHighlightr,
+           let storage = coordinator.codeStorage as? CodeAttributedString {
+            coordinator.appliedFont = font
+            CustomTextEditor.Coordinator.swapFonts(in: storage, theme: h.theme, to: font)
+            textView.needsDisplay = true
+            coordinator.rulerView?.fontSize = font.pointSize
+            coordinator.rulerView?.needsDisplay = true
+        }
         if themeChanged, let h = Self.sharedHighlightr {
             coordinator.appliedTheme = theme
             coordinator.appliedFont = font

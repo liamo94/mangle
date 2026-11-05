@@ -140,6 +140,23 @@ open class CodeAttributedString : NSTextStorage
         self.edited(TextStorageEditActions.editedAttributes, range: range, changeInLength: 0)
     }
     
+    /// Replaces every font with `transform`'s result in one pass with a single edit, far
+    /// faster than `addAttribute` per run through this wrapper.
+    open func replaceFonts(_ transform: (RPFont) -> RPFont)
+    {
+        let all = NSRange(location: 0, length: stringStorage.length)
+        var changes: [(NSRange, RPFont)] = []
+        stringStorage.enumerateAttribute(.font, in: all) { value, range, _ in
+            if let font = value as? RPFont { changes.append((range, transform(font))) }
+        }
+        beginEditing()
+        stringStorage.beginEditing()
+        for (range, font) in changes { stringStorage.addAttribute(.font, value: font, range: range) }
+        stringStorage.endEditing()
+        edited(TextStorageEditActions.editedAttributes, range: all, changeInLength: 0)
+        endEditing()
+    }
+    
     /// Called internally everytime the string is modified.
     open override func processEditing()
     {

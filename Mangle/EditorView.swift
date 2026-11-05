@@ -684,10 +684,10 @@ struct EditorView: View {
                 if mods == .command {
                     switch event.charactersIgnoringModifiers {
                     case "=", "+":
-                        zoom(by: 1)
+                        zoom(by: 1, held: event.isARepeat)
                         return nil
                     case "-":
-                        zoom(by: -1)
+                        zoom(by: -1, held: event.isARepeat)
                         return nil
                     case "0":
                         resetZoom()
@@ -1891,8 +1891,8 @@ struct EditorView: View {
         let size = min(max(fitted, bounds.lowerBound), bounds.upperBound)
         let scroll = { Self.scrollToTop(of: range, in: tv) }
         guard size != settings.presentationFontSize, let mtv = tv as? MangleTextView else { return scroll() }
-        // The new size reaches the text through a re-highlight (in the background for a long
-        // document); scrolling before it lands would measure the old layout.
+        // The new size reaches the text on SwiftUI's next view update; scrolling before it
+        // lands would measure the old layout.
         mtv.afterRestyle = scroll
         settings.presentationFontSize = size
     }
@@ -1922,13 +1922,17 @@ struct EditorView: View {
         tv.scroll(NSPoint(x: 0, y: max(line.minY + tv.textContainerOrigin.y - tv.textContainerInset.height, 0)))
     }
     
-    /// Zooms the editor, or the presentation size while presenting.
-    private func zoom(by step: CGFloat) {
+    /// Zooms the editor, or the presentation size while presenting, one step in `direction`
+    /// (+1 or -1). Steps are about a tenth of the size, and double while the key is held.
+    private func zoom(by direction: CGFloat, held: Bool = false) {
+        func stepped(_ size: CGFloat, in range: ClosedRange<CGFloat>) -> CGFloat {
+            let step = max((size * 0.1).rounded(), 1) * (held ? 2 : 1)
+            return min(max(size + direction * step, range.lowerBound), range.upperBound)
+        }
         if viewModel.isPresenting {
-            let range = SettingsManager.presentationFontSizeRange
-            settings.presentationFontSize = min(max(settings.presentationFontSize + step * 2, range.lowerBound), range.upperBound)
+            settings.presentationFontSize = stepped(settings.presentationFontSize, in: SettingsManager.presentationFontSizeRange)
         } else {
-            settings.fontSize = min(max(settings.fontSize + step, 9), 36)
+            settings.fontSize = stepped(settings.fontSize, in: 9...48)
         }
     }
     
@@ -3293,7 +3297,9 @@ struct CustomTextEditor: NSViewRepresentable {
             coordinator.highlightr?.setTheme(to: theme)
             coordinator.applyThemeColors(to: textView, isDark: isDark)
         }
-        if themeChanged || fontChanged {
+        if fontChanged && !themeChanged {
+            coordinator.applyFont(newFont, to: textView)
+        } else if themeChanged {
             coordinator.highlightr?.theme.setCodeFont(newFont)
             // Re-highlight the entire text so the new font applies immediately,
             // not just on the next edit.
@@ -3740,15 +3746,80 @@ struct CustomTextEditor: NSViewRepresentable {
             highlightRegion(region, language: language)
         }
         
+        /// Bumped by each font change, so a highlight pass started before it doesn't put the
+        /// old font back.
+        private var fontGeneration = 0
+
+        /// Swaps the editor's fonts in place. Colours don't change with the font, so this
+        /// skips a re-highlight, which ran highlight.js over the whole document on every zoom.
+        func applyFont(_ font: NSFont, to textView: MangleTextView) {
+            guard let theme = highlightr?.theme, let storage = codeStorage else { return }
+            fontGeneration += 1
+            let anchor = topVisibleAnchor(in: textView)
+            Self.swapFonts(in: storage, theme: theme, to: font)
+            textView.typingAttributes[.font] = font
+            // Relayout only repaints the text itself, so shrinking left the old, taller
+            // current-line band showing in the margin beside it.
+            textView.needsDisplay = true
+            rulerView?.needsDisplay = true
+
+            if let anchor { restore(anchor, in: textView) }
+            if let then = textView.afterRestyle {
+                textView.afterRestyle = nil
+                then()
+            }
+        }
+
+        /// Sets `theme`'s font and swaps it into already-highlighted text, regular, bold and
+        /// italic runs each for their new counterpart.
+        static func swapFonts(in storage: CodeAttributedString, theme: Theme, to font: NSFont) {
+            let old = (regular: theme.codeFont, bold: theme.boldCodeFont, italic: theme.italicCodeFont)
+            theme.setCodeFont(font)
+            var replacements: [NSFont: NSFont] = [:]
+            storage.replaceFonts { current in
+                if let cached = replacements[current] { return cached }
+                let new: NSFont
+                if current == old.regular { new = theme.codeFont }
+                else if current == old.bold { new = theme.boldCodeFont }
+                else if current == old.italic { new = theme.italicCodeFont }
+                else { new = NSFont(descriptor: current.fontDescriptor, size: font.pointSize) ?? font }
+                replacements[current] = new
+                return new
+            }
+        }
+
+        /// The first visible character and how far down its line the viewport starts, so a
+        /// zoom keeps the same text at the top instead of jumping.
+        private func topVisibleAnchor(in textView: NSTextView) -> (char: Int, fraction: CGFloat)? {
+            guard let lm = textView.layoutManager, let container = textView.textContainer,
+                  textView.textStorage?.length ?? 0 > 0 else { return nil }
+            let top = textView.visibleRect.minY - textView.textContainerOrigin.y
+            guard top > 0 else { return nil }
+            let glyph = lm.glyphIndex(for: NSPoint(x: 0, y: top), in: container)
+            let line = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let fraction = line.height > 0 ? min(max((top - line.minY) / line.height, 0), 1) : 0
+            return (lm.characterIndexForGlyph(at: glyph), fraction)
+        }
+
+        private func restore(_ anchor: (char: Int, fraction: CGFloat), in textView: NSTextView) {
+            guard let lm = textView.layoutManager, let length = textView.textStorage?.length,
+                  anchor.char < length else { return }
+            let line = lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: anchor.char), effectiveRange: nil)
+            let y = line.minY + anchor.fraction * line.height + textView.textContainerOrigin.y
+            textView.scroll(NSPoint(x: textView.visibleRect.minX, y: max(y, 0)))
+        }
+
         private func highlightRegion(_ region: NSRange, language: String) {
             guard let storage = codeStorage, let highlightr else { return }
             let code = (storage.string as NSString).substring(with: region)
             let isWholeDocument = region.location == 0 && region.length == storage.length
             
+            let fontGeneration = self.fontGeneration
             func apply(_ highlighted: NSAttributedString) -> Bool {
-                // Drop stale results: the text changed or the language switched meanwhile.
+                // Drop stale results: the text, language or font changed meanwhile.
                 guard NSMaxRange(region) <= storage.length,
                       storage.language == language,
+                      fontGeneration == self.fontGeneration,
                       highlighted.string == code,
                       (storage.string as NSString).substring(with: region) == code else { return false }
                 storage.beginEditing()
