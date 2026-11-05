@@ -435,6 +435,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         window.setFrame(frame, display: true, animate: true)
     }
     
+    /// Grows (+1) or shrinks (-1) the editor by a tenth around its centre, kept on screen.
+    /// Steps double and skip the animation while the key is held.
+    func resizeEditor(by direction: CGFloat, held: Bool) {
+        guard let window = editorWindow, !window.styleMask.contains(.fullScreen), !isEnteringFullScreen else { return }
+        let screen = (window.screen ?? screenAtCursor()).visibleFrame
+        let scale = 1 + direction * (held ? 0.2 : 0.1)
+        let old = window.frame
+        let size = NSSize(width: min(max(old.width * scale, 400), screen.width).rounded(),
+                          height: min(max(old.height * scale, 300), screen.height).rounded())
+        var frame = NSRect(x: old.midX - size.width / 2, y: old.midY - size.height / 2, width: size.width, height: size.height)
+        frame.origin.x = min(max(frame.minX, screen.minX), screen.maxX - frame.width).rounded()
+        frame.origin.y = min(max(frame.minY, screen.minY), screen.maxY - frame.height).rounded()
+        window.setFrame(frame, display: true, animate: !held)
+        rememberSize(of: window, key: Self.editorSizeKey)
+    }
+    
     private func endPresentation(animate: Bool) {
         guard editorViewModel.isPresenting else { return }
         if exitFullScreen(then: { [weak self] in self?.endPresentation(animate: animate) }) { return }
@@ -1099,6 +1115,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             self?.togglePresentation()
         }, onTogglePresentationFullScreen: { [weak self] in
             self?.togglePresentationFullScreen()
+        }, onResizeWindow: { [weak self] direction, held in
+            self?.resizeEditor(by: direction, held: held)
         }, onShowHistory: { [weak self] in
             self?.showHistory()
         }, onShowSettings: { [weak self] in

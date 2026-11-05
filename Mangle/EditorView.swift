@@ -345,6 +345,7 @@ struct EditorView: View {
     var onNewScratch: () -> Void = {}
     var onTogglePresentation: () -> Void = {}
     var onTogglePresentationFullScreen: () -> Void = {}
+    var onResizeWindow: (_ direction: CGFloat, _ held: Bool) -> Void = { _, _ in }
     var onShowHistory: () -> Void = {}
     var onShowSettings: () -> Void = {}
     @Environment(\.colorScheme) private var colorScheme
@@ -663,6 +664,11 @@ struct EditorView: View {
                 if mods == .command, key == "t" { showTransformMenu(); return nil }
                 if mods == [.command, .option], key == "p" { onTogglePresentation(); return nil }
                 if mods == [.command, .control], key == "f", viewModel.isPresenting { onTogglePresentationFullScreen(); return nil }
+                // ⌥⌘= / ⌥⌘− resize the window, by key code since ⌥ changes the typed character.
+                if mods == [.command, .option], event.keyCode == 24 || event.keyCode == 27 {
+                    onResizeWindow(event.keyCode == 24 ? 1 : -1, event.isARepeat)
+                    return nil
+                }
                 
                 if !editingFieldFocused {
                     if mods == .command, key == "e" { useSelectionForFind(); return nil }
@@ -1711,6 +1717,8 @@ struct EditorView: View {
             EditorCommand(title: "Zoom In", section: "View", shortcut: "⌘=") { zoom(by: 1) },
             EditorCommand(title: "Zoom Out", section: "View", shortcut: "⌘−") { zoom(by: -1) },
             EditorCommand(title: "Reset Zoom", section: "View", shortcut: "⌘0", run: resetZoom),
+            EditorCommand(title: "Increase Window Size", section: "View", shortcut: "⌥⌘=") { onResizeWindow(1, false) },
+            EditorCommand(title: "Decrease Window Size", section: "View", shortcut: "⌥⌘−") { onResizeWindow(-1, false) },
         ]
         commands += presentationCommands
         commands += OpenIn.installed.map { app, url in
@@ -4389,6 +4397,8 @@ private struct ShortcutsPopover: View {
             ("⌘ =",        "Increase font size"),
             ("⌘ −",        "Decrease font size"),
             ("⌘ 0",        "Reset font size"),
+            ("⌥ ⌘ =",      "Increase window size"),
+            ("⌥ ⌘ −",      "Decrease window size"),
             ("⌥ Z",        "Toggle word wrap"),
             ("⌥ ⌘ P",      "Presentation mode"),
         ]),
