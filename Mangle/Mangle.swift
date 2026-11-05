@@ -33,6 +33,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     var editorViewModel = EditorViewModel()
     var historyManager = HistoryManager()
     private let recentPreview = RecentPreviewPanel()
+    private let menuHint = MenuHintPanel()
+    private weak var recentMenu: NSMenu?
     var statusItem: NSStatusItem?
     var eventHandlerInstalled = false
     /// Handles keys pressed in History; set by `HistoryView`. Returns nil when handled.
@@ -204,15 +206,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     
     func updateMenuShortcuts() {
         let menu = NSMenu()
+        menu.delegate = self
         
         let settings = SettingsManager.shared
         
-        let editorItem = NSMenuItem(title: "Open Editor", action: #selector(showEditorFromMenu), keyEquivalent: settings.editorShortcut.keyEquivalent)
+        let editorItem = NSMenuItem(title: "Edit Selection or Clipboard", action: #selector(showEditorFromMenu), keyEquivalent: settings.editorShortcut.keyEquivalent)
         editorItem.keyEquivalentModifierMask = settings.editorShortcut.cocoaModifiers
+        // A hint shown by `menuHint` (see `menu(_:willHighlight:)`).
+        editorItem.representedObject = "Opens the text selected in the front app, or the clipboard if nothing is selected."
         menu.addItem(editorItem)
         
-        let scratchItem = NSMenuItem(title: "Scratch Pad", action: #selector(showScratch), keyEquivalent: settings.scratchShortcut.keyEquivalent)
+        let scratchItem = NSMenuItem(title: "Open Scratch Pad", action: #selector(showScratch), keyEquivalent: settings.scratchShortcut.keyEquivalent)
         scratchItem.keyEquivalentModifierMask = settings.scratchShortcut.cocoaModifiers
+        scratchItem.representedObject = "A notepad for your own notes. It keeps its text between uses."
         menu.addItem(scratchItem)
         
         let historyItem = NSMenuItem(title: "Open History", action: #selector(showHistory), keyEquivalent: settings.historyShortcut.keyEquivalent)
@@ -222,6 +228,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // Filled in each time it opens (see `menuNeedsUpdate`).
         let recentMenu = NSMenu(title: "Copy Recent")
         recentMenu.delegate = self
+        self.recentMenu = recentMenu
         let recentItem = NSMenuItem(title: "Copy Recent", action: nil, keyEquivalent: "")
         recentItem.submenu = recentMenu
         menu.addItem(recentItem)
@@ -236,6 +243,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     
     /// The Copy Recent submenu: the first few snippets, in History's order.
     func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === recentMenu else { return }
         menu.removeAllItems()
         let entries = historyManager.entries
         let ordered = entries.filter(\.isPinned) + entries.filter { !$0.isPinned }
@@ -269,6 +277,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        if let hint = item?.representedObject as? String {
+            menuHint.schedule(hint)
+        } else {
+            menuHint.hide()
+        }
         guard let id = item?.representedObject as? UUID,
               let entry = historyManager.entries.first(where: { $0.id == id }) else {
             recentPreview.hide()
@@ -282,6 +295,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     
     func menuDidClose(_ menu: NSMenu) {
         recentPreview.hide()
+        menuHint.hide()
     }
     
     /// "2m ago · Swift · 12 lines", matching History's rows.
@@ -768,7 +782,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         hotKeyID1.id = 1
         let status1 = RegisterEventHotKey(settings.editorShortcut.keyCode, settings.editorShortcut.modifiers, hotKeyID1, GetApplicationEventTarget(), 0, &hotKeyRef)
         if status1 != noErr {
-            DispatchQueue.main.async { self.showToast("⚠️ Open Editor shortcut conflict") }
+            DispatchQueue.main.async { self.showToast("⚠️ Edit Selection shortcut conflict") }
         }
         
         var hotKeyID2 = EventHotKeyID()
