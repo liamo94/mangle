@@ -436,7 +436,7 @@ struct EditorView: View {
     var body: some View {
         let chrome = chromeColor
         return VStack(spacing: 0) {
-            if needsAccessibility && !viewModel.isPresenting {
+            if needsAccessibility && !viewModel.isPresenting && !viewModel.isScratch {
                 accessibilityBanner
             }
             if showFindBar {
@@ -962,13 +962,13 @@ struct EditorView: View {
         HStack(spacing: 0) {
             // Left: read-only status, then the document menus.
             if showCursor {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     CursorPositionLabel(status: viewModel.status)
                     if showStats {
                         TextStatsLabel(status: viewModel.status)
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12)
 
                 BarDivider()
             }
@@ -3764,14 +3764,22 @@ struct CustomTextEditor: NSViewRepresentable {
             guard let theme = highlightr?.theme, let storage = codeStorage else { return }
             fontGeneration += 1
             let anchor = topVisibleAnchor(in: textView)
-            Self.swapFonts(in: storage, theme: theme, to: font)
+            // Before the swap, so the relayout sizes the empty last line from the new font too.
             textView.typingAttributes[.font] = font
+            Self.swapFonts(in: storage, theme: theme, to: font)
             // Relayout only repaints the text itself, so shrinking left the old, taller
             // current-line band showing in the margin beside it.
             textView.needsDisplay = true
             rulerView?.needsDisplay = true
 
             if let anchor { restore(anchor, in: textView) }
+            // The caret keeps its old size and place through an attribute-only change, and was
+            // left behind as a stray bar after a zoom. Re-place it once layout has caught up.
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView else { return }
+                textView.updateInsertionPointStateAndRestartTimer(true)
+                textView.needsDisplay = true
+            }
             if let then = textView.afterRestyle {
                 textView.afterRestyle = nil
                 then()
@@ -4212,18 +4220,25 @@ struct BarPrimaryActionLabel: View {
 struct BarStat: View {
     let value: Int
     let label: String
-    var valueWidth: CGFloat = 0
+    /// Room is kept for this many digits, so the bar doesn't shift until the count outgrows it.
+    var reservedDigits = 1
 
     var body: some View {
-        HStack(spacing: 3) {
-            Text("\(value)")
+        ZStack(alignment: .leading) {
+            stat(String(repeating: "0", count: reservedDigits)).hidden()
+            stat("\(value)")
+        }
+        .font(.system(size: 11))
+    }
+
+    private func stat(_ number: String) -> some View {
+        HStack(spacing: 2) {
+            Text(number)
                 .monospacedDigit()
                 .foregroundColor(.primary.opacity(0.7))
-                .frame(minWidth: valueWidth, alignment: .trailing)
             Text(label)
                 .foregroundColor(.secondary.opacity(0.7))
         }
-        .font(.system(size: 11))
     }
 }
 
@@ -4328,10 +4343,13 @@ private struct CursorPositionLabel: View {
     @ObservedObject var status: EditorStatus
     
     var body: some View {
-        Text("Ln \(status.cursorLine), Col \(status.cursorColumn)")
-            .font(.system(size: 11).monospacedDigit())
-            .foregroundColor(.secondary)
-            .fixedSize()
+        ZStack(alignment: .leading) {
+            Text("Ln 00, Col 00").hidden()
+            Text("Ln \(status.cursorLine), Col \(status.cursorColumn)")
+        }
+        .font(.system(size: 11).monospacedDigit())
+        .foregroundColor(.secondary)
+        .fixedSize()
     }
 }
 
@@ -4339,16 +4357,12 @@ private struct TextStatsLabel: View {
     @ObservedObject var status: EditorStatus
     
     var body: some View {
-        HStack(spacing: 10) {
-            pill(value: status.lines, label: "ln", valueWidth: 18)
-            pill(value: status.words, label: "wd", valueWidth: 24)
-            pill(value: status.chars, label: "ch", valueWidth: 34)
+        HStack(spacing: 8) {
+            BarStat(value: status.lines, label: "ln", reservedDigits: 2)
+            BarStat(value: status.words, label: "wd", reservedDigits: 2)
+            BarStat(value: status.chars, label: "ch", reservedDigits: 2)
         }
         .fixedSize()
-    }
-    
-    private func pill(value: Int, label: String, valueWidth: CGFloat) -> some View {
-        BarStat(value: value, label: label, valueWidth: valueWidth)
     }
 }
 
