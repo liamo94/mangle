@@ -96,11 +96,19 @@ class LineNumberRulerView: NSRulerView {
     var activeLine: Int = 0
     private var digitCount = 1
     private var thickness: CGFloat = 52
+    /// Width of the widest line number. Numbers right-align inside it and its left edge stays
+    /// put, so zooming grows them rightward like the text instead of sliding them sideways.
+    private var numberColumnWidth: CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: numberFontSize, weight: .semibold)
+        return CGFloat(digitCount) * ("8" as NSString).size(withAttributes: [.font: font]).width
+    }
+    private static let numberLeading: CGFloat = 16
     /// Fold chevrons for unfolded blocks only show while the pointer is over the gutter.
     private var isHovering = false { didSet { if isHovering != oldValue { needsDisplay = true } } }
     private static let foldColumnWidth: CGFloat = 16
-    /// Just under the text size, so the numbers read clearly without competing with it.
-    private var numberFontSize: CGFloat { (fontSize * 0.95).rounded() }
+    /// Just under the text size, so the numbers read clearly without competing with it. Not
+    /// rounded: rounding left some zoom steps with no change and others jumping a whole point.
+    private var numberFontSize: CGFloat { fontSize * 0.95 }
     
     override var isFlipped: Bool { true }
     override var requiredThickness: CGFloat { thickness }
@@ -143,15 +151,13 @@ class LineNumberRulerView: NSRulerView {
     }
     
     private func updateThickness() {
-        let font = NSFont.monospacedSystemFont(ofSize: numberFontSize, weight: .semibold)
-        let digitWidth = ("8" as NSString).size(withAttributes: [.font: font]).width
         let newThickness = showsLineNumbers
-            ? max(52, ceil(CGFloat(digitCount) * digitWidth + 12 + Self.foldColumnWidth))
+            ? max(52, ceil(Self.numberLeading + numberColumnWidth + 2 + Self.foldColumnWidth))
             : Self.foldColumnWidth + 8
+        needsDisplay = true
         guard newThickness != thickness else { return }
         thickness = newThickness
         scrollView?.tile()
-        needsDisplay = true
     }
     
     override func draw(_ dirtyRect: NSRect) {
@@ -196,6 +202,7 @@ class LineNumberRulerView: NSRulerView {
         let inset = textView.textContainerInset.height
         let width = bounds.width
         let h     = bounds.height
+        let numberRight = Self.numberLeading + numberColumnWidth
         // Read scroll position directly from the text view — always current at draw time.
         let scrollOffset = textView.visibleRect.origin.y
         
@@ -215,7 +222,7 @@ class LineNumberRulerView: NSRulerView {
             if showsLineNumbers {
                 let s  = "\(n)" as NSString
                 let sz = s.size(withAttributes: attrs)
-                s.draw(at: NSPoint(x: width - sz.width - Self.foldColumnWidth - 2, y: y + baselineShift), withAttributes: attrs)
+                s.draw(at: NSPoint(x: numberRight - sz.width, y: y + baselineShift), withAttributes: attrs)
             }
             if let index = foldByLine[n] {
                 let folded = textView.isFolded(foldRegions[index])
